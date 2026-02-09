@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vienna Hotel Revenue Dashboard - Production</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-50 min-h-screen">
+    <div id="app" class="p-6 max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="hotel" class="w-8 h-8 text-indigo-600"></i>
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-800">Vienna Hotel Revenue Dashboard</h1>
+                        <p class="text-gray-600">Live competitive pricing via Google Hotels</p>
+                    </div>
+                </div>
+                <div id="apiStatus" class="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
+                    <div class="w-2 h-2 rounded-full bg-gray-400"></div>
+                    <span class="text-sm text-gray-600">Checking API...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Section -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center gap-2 mb-4">
+                <i data-lucide="calendar" class="w-5 h-5 text-indigo-600"></i>
+                <h2 class="text-xl font-semibold text-gray-800">Search Configuration</h2>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Check-in Date</label>
+                    <input type="date" id="checkInDate" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Check-out Date</label>
+                    <input type="date" id="checkOutDate" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Number of Guests</label>
+                    <select id="guestCount" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                        <option value="1">1 Person</option>
+                        <option value="2" selected>2 People</option>
+                        <option value="3">3 People</option>
+                        <option value="4">4 People</option>
+                    </select>
+                </div>
+
+                <div class="flex items-end">
+                    <button id="fetchPricesBtn" onclick="fetchAllPrices()" class="w-full px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <span class="flex items-center justify-center gap-2">
+                            <i data-lucide="search" class="w-4 h-4"></i>
+                            Fetch Live Prices
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="nightsInfo" class="hidden p-3 bg-indigo-50 rounded-lg">
+                <p class="text-indigo-800 font-medium">
+                    <span id="nightsCount" class="font-bold"></span> night(s) selected
+                </p>
+            </div>
+        </div>
+
+        <!-- Your Hotel Price -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Your Hotel Price</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Your Price per Night (€)</label>
+                    <input type="number" id="yourPrice" step="0.01" placeholder="Enter your price" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                </div>
+                <div id="priceStatusBox" class="hidden"></div>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="hidden bg-white rounded-lg shadow-lg p-8 mb-6">
+            <div class="flex flex-col items-center justify-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+                <p class="text-gray-700 font-medium">Fetching competitor prices from Google Hotels...</p>
+                <p class="text-gray-500 text-sm mt-2" id="loadingProgress">Initializing...</p>
+                <div class="mt-4 w-full max-w-md bg-gray-200 rounded-full h-2">
+                    <div id="progressBar" class="bg-indigo-600 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="hidden bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
+            <div class="flex gap-3">
+                <i data-lucide="alert-triangle" class="w-6 h-6 text-red-600 flex-shrink-0"></i>
+                <div>
+                    <h3 class="font-semibold text-red-900 mb-2">Error Fetching Prices</h3>
+                    <p class="text-red-700 text-sm" id="errorMessage"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="hidden space-y-6">
+            <!-- Competitor Prices Table -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Competitor Prices</h2>
+                    <div class="text-sm text-gray-500">
+                        Last updated: <span id="lastUpdated"></span>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Hotel</th>
+                                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Price/Night (€)</th>
+                                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Total Price (€)</th>
+                                <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700">Source</th>
+                            </tr>
+                        </thead>
+                        <tbody id="competitorTableBody" class="divide-y divide-gray-200">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                    <p class="text-sm text-indigo-700 font-medium mb-1">Average Competitor Price</p>
+                    <p class="text-2xl font-bold text-indigo-900">
+                        <span id="avgPrice">€0.00</span>
+                        <span class="text-sm font-normal text-indigo-700"> /night</span>
+                    </p>
+                </div>
+
+                <div class="p-4 bg-purple-50 rounded-lg border border-purple-200">
+                    <p class="text-sm text-purple-700 font-medium mb-1">Average Total</p>
+                    <p class="text-2xl font-bold text-purple-900" id="avgTotal">€0.00</p>
+                </div>
+
+                <div class="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <p class="text-sm text-blue-700 font-medium mb-1">Your Total Price</p>
+                    <p class="text-2xl font-bold text-blue-900" id="yourTotal">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div id="setupInstructions" class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+            <div class="flex gap-3">
+                <i data-lucide="info" class="w-6 h-6 text-yellow-600 flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <h3 class="font-semibold text-yellow-900 mb-2">Setup Required</h3>
+                    <p class="text-yellow-800 text-sm mb-3">To enable live price fetching from Google Hotels, you need to run the backend API server.</p>
+                    <div class="bg-yellow-100 p-3 rounded font-mono text-xs text-yellow-900 mb-3">
+                        <p># Install dependencies:</p>
+                        <p>pip install flask flask-cors requests beautifulsoup4</p>
+                        <p class="mt-2"># Run the API server:</p>
+                        <p>python google_hotels_scraper.py</p>
+                    </div>
+                    <p class="text-yellow-800 text-sm">The server will run on http://localhost:5000 and automatically fetch prices from Google Hotels.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div id="instructions" class="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <div class="flex gap-3">
+                <i data-lucide="alert-circle" class="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5"></i>
+                <div>
+                    <h3 class="font-semibold text-blue-900 mb-2">How to Use</h3>
+                    <ol class="text-blue-800 space-y-1 text-sm">
+                        <li>1. Make sure the backend API is running (see setup above)</li>
+                        <li>2. Select check-in and check-out dates</li>
+                        <li>3. Choose number of guests (1-4 people)</li>
+                        <li>4. Click "Fetch Live Prices" to scrape Google Hotels</li>
+                        <li>5. Enter your hotel's price to see comparison</li>
+                        <li>6. System alerts you when ±20% from average</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const API_URL = 'http://localhost:5000';
+        let competitorPrices = [];
+        let nights = 0;
+
+        // Check API status on load
+        checkAPIStatus();
+
+        document.getElementById('checkInDate').addEventListener('change', updateNights);
+        document.getElementById('checkOutDate').addEventListener('change', updateNights);
+        document.getElementById('yourPrice').addEventListener('input', updatePriceStatus);
+
+        async function checkAPIStatus() {
+            const statusDiv = document.getElementById('apiStatus');
+            try {
+                const response = await fetch(`${API_URL}/api/health`);
+                if (response.ok) {
+                    statusDiv.innerHTML = `
+                        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                        <span class="text-sm text-green-700 font-medium">API Connected</span>
+                    `;
+                    document.getElementById('setupInstructions').classList.add('hidden');
+                    document.getElementById('fetchPricesBtn').disabled = false;
+                } else {
+                    throw new Error('API not responding');
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `
+                    <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <span class="text-sm text-red-700 font-medium">API Offline</span>
+                `;
+                document.getElementById('fetchPricesBtn').disabled = true;
+            }
+        }
+
+        function updateNights() {
+            const checkIn = document.getElementById('checkInDate').value;
+            const checkOut = document.getElementById('checkOutDate').value;
+            
+            if (checkIn && checkOut) {
+                const start = new Date(checkIn);
+                const end = new Date(checkOut);
+                nights = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+                
+                if (nights > 0) {
+                    document.getElementById('nightsInfo').classList.remove('hidden');
+                    document.getElementById('nightsCount').textContent = nights;
+                } else {
+                    document.getElementById('nightsInfo').classList.add('hidden');
+                }
+            }
+        }
+
+        async function fetchAllPrices() {
+            const checkIn = document.getElementById('checkInDate').value;
+            const checkOut = document.getElementById('checkOutDate').value;
+            const guests = document.getElementById('guestCount').value;
+
+            if (!checkIn || !checkOut) {
+                alert('Please select check-in and check-out dates');
+                return;
+            }
+
+            if (nights <= 0) {
+                alert('Check-out date must be after check-in date');
+                return;
+            }
+
+            // Hide previous states
+            document.getElementById('instructions').classList.add('hidden');
+            document.getElementById('resultsSection').classList.add('hidden');
+            document.getElementById('errorState').classList.add('hidden');
+            document.getElementById('loadingState').classList.remove('hidden');
+
+            // Animate progress
+            animateProgress();
+
+            try {
+                const response = await fetch(`${API_URL}/api/fetch-prices`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        check_in: checkIn,
+                        check_out: checkOut,
+                        guests: parseInt(guests)
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API returned ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (data.success) {
+                    competitorPrices = data.data.filter(h => h.status === 'success');
+                    displayResults();
+                    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+                    document.getElementById('loadingState').classList.add('hidden');
+                    document.getElementById('resultsSection').classList.remove('hidden');
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+
+            } catch (error) {
+                document.getElementById('loadingState').classList.add('hidden');
+                document.getElementById('errorState').classList.remove('hidden');
+                document.getElementById('errorMessage').textContent = error.message;
+                console.error('Error fetching prices:', error);
+            }
+        }
+
+        function animateProgress() {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('loadingProgress');
+            let progress = 0;
+
+            const interval = setInterval(() => {
+                progress += 2;
+                progressBar.style.width = `${Math.min(progress, 90)}%`;
+                
+                if (progress < 30) {
+                    progressText.textContent = 'Connecting to Google Hotels...';
+                } else if (progress < 60) {
+                    progressText.textContent = 'Searching competitor hotels...';
+                } else if (progress < 90) {
+                    progressText.textContent = 'Extracting prices...';
+                } else {
+                    progressText.textContent = 'Finalizing results...';
+                    clearInterval(interval);
+                }
+            }, 100);
+        }
+
+        function displayResults() {
+            const tbody = document.getElementById('competitorTableBody');
+            tbody.innerHTML = '';
+
+            competitorPrices.forEach(hotel => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="px-4 py-3 text-sm text-gray-800 font-medium">${hotel.name}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 font-semibold">€${hotel.pricePerNight.toFixed(2)}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700">€${hotel.totalPrice.toFixed(2)}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">${hotel.source}</span>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            updateSummary();
+            updatePriceStatus();
+        }
+
+        function updateSummary() {
+            const avgPrice = competitorPrices.reduce((sum, h) => sum + h.pricePerNight, 0) / competitorPrices.length;
+            const avgTotal = avgPrice * nights;
+
+            document.getElementById('avgPrice').textContent = `€${avgPrice.toFixed(2)}`;
+            document.getElementById('avgTotal').textContent = `€${avgTotal.toFixed(2)}`;
+
+            const yourPrice = parseFloat(document.getElementById('yourPrice').value);
+            if (yourPrice > 0) {
+                document.getElementById('yourTotal').textContent = `€${(yourPrice * nights).toFixed(2)}`;
+            }
+        }
+
+        function updatePriceStatus() {
+            const yourPrice = parseFloat(document.getElementById('yourPrice').value);
+            
+            if (!yourPrice || competitorPrices.length === 0) {
+                document.getElementById('priceStatusBox').classList.add('hidden');
+                return;
+            }
+
+            const avgPrice = competitorPrices.reduce((sum, h) => sum + h.pricePerNight, 0) / competitorPrices.length;
+            const difference = ((yourPrice - avgPrice) / avgPrice) * 100;
+
+            const statusBox = document.getElementById('priceStatusBox');
+            statusBox.classList.remove('hidden');
+
+            let bgColor, borderColor, textColor, icon, message;
+
+            if (difference > 20) {
+                bgColor = 'bg-red-50';
+                borderColor = 'border-red-200';
+                textColor = 'text-red-600';
+                icon = 'trending-up';
+                message = `${difference.toFixed(1)}% ABOVE average`;
+            } else if (difference < -20) {
+                bgColor = 'bg-orange-50';
+                borderColor = 'border-orange-200';
+                textColor = 'text-orange-600';
+                icon = 'trending-down';
+                message = `${Math.abs(difference).toFixed(1)}% BELOW average`;
+            } else {
+                bgColor = 'bg-green-50';
+                borderColor = 'border-green-200';
+                textColor = 'text-green-600';
+                icon = 'check-circle';
+                message = `Within range (${difference.toFixed(1)}%)`;
+            }
+
+            statusBox.className = `flex items-end`;
+            statusBox.innerHTML = `
+                <div class="w-full p-4 rounded-lg border ${bgColor} ${borderColor}">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="${icon}" class="w-5 h-5 ${textColor}"></i>
+                        <p class="font-semibold ${textColor}">${message}</p>
+                    </div>
+                </div>
+            `;
+
+            lucide.createIcons();
+            document.getElementById('yourTotal').textContent = `€${(yourPrice * nights).toFixed(2)}`;
+        }
+
+        // Set default dates
+        const today = new Date();
+        const checkIn = new Date(today);
+        checkIn.setDate(checkIn.getDate() + 30);
+        const checkOut = new Date(checkIn);
+        checkOut.setDate(checkOut.getDate() + 2);
+
+        document.getElementById('checkInDate').value = checkIn.toISOString().split('T')[0];
+        document.getElementById('checkOutDate').value = checkOut.toISOString().split('T')[0];
+        updateNights();
+    </script>
+</body>
+</html>
