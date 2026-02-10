@@ -40,6 +40,57 @@ HOTELS = [
     },
 ]
 
+
+def parse_seekda_price(html_text, nights):
+    """
+    Seekda pages show prices like:
+      € 1,193.00   <- original total price
+      -17 %        <- discount
+      € 990.19     <- discounted total price  <-- WE WANT THIS
+
+    Strategy: find all EUR price blocks, then look for discount pattern.
+    The discounted price always follows a "- X %" pattern.
+    If no discount exists, take the first (lowest) total price.
+    """
+
+    # Find all price blocks: "€ 1,193.00" or "EUR 990.19"
+    # Seekda always uses format: € 1,234.56 (with comma thousands separator)
+    price_pattern = re.compile(r'€\s*([\d]{2,}[,\.][\d,\.]+)')
+    discount_pattern = re.compile(r'-\s*\d+\s*%')
+
+    all_prices = []
+    for m in price_pattern.finditer(html_text):
+        price_str = m.group(1).replace(',', '')
+        try:
+            price = float(price_str)
+            if 30 <= price <= 50000:  # valid total price range
+                all_prices.append((m.start(), price))
+        except:
+            pass
+
+    if not all_prices:
+        return None
+
+    # Look for discounted prices: find a discount marker, then take the NEXT price after it
+    discounted_prices = []
+    for dm in discount_pattern.finditer(html_text):
+        # Find the next price that comes AFTER this discount marker
+        for pos, price in all_prices:
+            if pos > dm.start():
+                discounted_prices.append(price)
+                break
+
+    if discounted_prices:
+        # Take the lowest discounted total price (cheapest room)
+        best_total = min(discounted_prices)
+    else:
+        # No discount found - take the lowest total price
+        best_total = min(p for _, p in all_prices)
+
+    price_per_night = round(best_total / nights, 2)
+    return price_per_night
+
+
 def scrape_seekda(hotel, checkin, checkout, guests):
     try:
         url = hotel['url_template'].format(
@@ -48,62 +99,37 @@ def scrape_seekda(hotel, checkin, checkout, guests):
             guests=guests
         )
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
         resp = requests.get(url, headers=headers, timeout=12)
-        soup = BeautifulSoup(resp.content, 'html.parser')
+        html_text = resp.text
 
-        prices = []
+        nights = (
+            datetime.strptime(checkout, '%Y-%m-%d') -
+            datetime.strptime(checkin, '%Y-%m-%d')
+        ).days
 
-        # Method 1: Look for EUR price patterns in text
-        for el in soup.find_all(string=re.compile(r'EUR\s*\d+|\d+[\.,]\d{2}\s*€|€\s*\d+')):
-            text = str(el)
-            for pattern in [r'EUR\s*(\d[\d,\.]*)', r'(\d[\d,\.]*)\s*€', r'€\s*(\d[\d,\.]*)']:
-                match = re.search(pattern, text)
-                if match:
-                    price_str = match.group(1).replace(',', '').replace('.', '')
-                    try:
-                        price = float(price_str)
-                        if 20 <= price <= 5000:
-                            prices.append(price)
-                    except:
-                        pass
+        price_per_night = parse_seekda_price(html_text, nights)
 
-        # Method 2: Look in data attributes and specific tags
-        for tag in soup.find_all(['span', 'div', 'p'], class_=re.compile(r'price|rate|amount|cost', re.I)):
-            text = tag.get_text()
-            match = re.search(r'(\d[\d,\.]+)', text)
-            if match:
-                try:
-                    price = float(match.group(1).replace(',', '').replace('.', ''))
-                    if 20 <= price <= 5000:
-                        prices.append(price)
-                except:
-                    pass
-
-        if prices:
-            # Return lowest price (cheapest available room)
-            min_price = min(prices)
-            nights = (datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days
-            price_per_night = round(min_price / nights, 2) if nights > 1 else min_price
+        if price_per_night:
             return {
                 'name': hotel['name'],
                 'is_mine': hotel['is_mine'],
                 'pricePerNight': price_per_night,
-                'totalPrice': min_price,
+                'totalPrice': round(price_per_night * nights, 2),
                 'status': 'success',
                 'source': 'Direct'
             }
-
-        return {
-            'name': hotel['name'],
-            'is_mine': hotel['is_mine'],
-            'pricePerNight': None,
-            'totalPrice': None,
-            'status': 'error',
-            'source': 'Unavailable'
-        }
+        else:
+            return {
+                'name': hotel['name'],
+                'is_mine': hotel['is_mine'],
+                'pricePerNight': None,
+                'totalPrice': None,
+                'status': 'error',
+                'source': 'Unavailable'
+            }
 
     except Exception as e:
         print(f"Error scraping {hotel['name']}: {e}")
@@ -122,7 +148,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'Vienna Hotel Revenue API',
-        'version': '4.0.0',
+        'version': '4.1.0',
         'hotels': [h['name'] for h in HOTELS]
     })
 
@@ -132,13 +158,16 @@ def fetch_prices():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
     try:
-        data      = request.get_json()
-        checkin   = data['check_in']
-        checkout  = data['check_out']
-        guests    = int(data.get('guests', 2))
-        nights    = (datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days
+        data     = request.get_json()
+        checkin  = data['check_in']
+        checkout = data['check_out']
+        guests   = int(data.get('guests', 2))
+        nights   = (
+            datetime.strptime(checkout, '%Y-%m-%d') -
+            datetime.strptime(checkin,  '%Y-%m-%d')
+        ).days
 
-        # Fetch ALL hotels in parallel!
+        # Fetch ALL 4 hotels in parallel
         results = []
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
@@ -161,8 +190,8 @@ def index():
         for h in HOTELS
     )
     return f'''<html><body style="font-family:Arial;padding:40px">
-    <h1>Vienna Hotel Revenue API v4.0</h1>
-    <p>🚀 Parallel Seekda scraping · 4 hotels</p>
+    <h1>Vienna Hotel Revenue API v4.1</h1>
+    <p>✅ Seekda direct scraping · rabattierte Preise · parallel</p>
     <ul>{hotels_list}</ul>
     </body></html>'''
 
