@@ -1,271 +1,102 @@
-"""
-Vienna Hotel Revenue Management - Google Hotels Price Scraper
-This script fetches competitor hotel prices from Google Hotels
-"""
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
-import json
 import re
+import os
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})  # Enable CORS for all origins
 
-# Competitor hotels in Vienna
-COMPETITORS = {
-    'pension_suzanne': {
-        'name': 'Hotel Pension Suzanne',
-        'google_hotel_id': 'ChIJYourHotelID',
-        'search_query': 'Hotel Pension Suzanne Vienna',
-        'is_your_hotel': True  # Mark as your hotel
-    },
-    'pension_neuer_markt': {
-        'name': 'Pension Neuer Markt',
-        'google_hotel_id': 'ChIJNzL6U1PdaUcRqLm_4BBFsQ4',
-        'search_query': 'Pension Neuer Markt Vienna',
-        'is_your_hotel': False
-    },
-    'hotel_schubertring': {
-        'name': 'Hotel am Schubertring',
-        'google_hotel_id': 'ChIJexample2',
-        'search_query': 'Hotel am Schubertring Vienna',
-        'is_your_hotel': False
-    },
-    'pension_opera': {
-        'name': 'Pension Opera Suites',
-        'google_hotel_id': 'ChIJexample3',
-        'search_query': 'Pension Opera Suites Vienna',
-        'is_your_hotel': False
-    },
-    'motel_one': {
-        'name': 'Motel One Wien-Staatsoper',
-        'google_hotel_id': 'ChIJexample4',
-        'search_query': 'Motel One Wien-Staatsoper',
-        'is_your_hotel': False
-    },
-    'hotel_post': {
-        'name': 'Hotel Post Wien',
-        'google_hotel_id': 'ChIJexample5',
-        'search_query': 'Hotel Post Wien Vienna',
-        'is_your_hotel': False
-    },
-    'hotel_secession': {
-        'name': 'Hotel Secession an der Oper',
-        'google_hotel_id': 'ChIJexample6',
-        'search_query': 'Hotel Secession an der Oper Vienna',
-        'is_your_hotel': False
-    }
-}
+# CORS - allow all origins
+CORS(app)
 
-def construct_google_hotels_url(hotel_name, check_in, check_out, guests):
-    """
-    Construct Google Hotels search URL
-    Format: https://www.google.com/travel/hotels/LOCATION/entity/HOTEL_ID?q=QUERY&...
-    """
-    # Format dates as YYYY-MM-DD
-    checkin_str = check_in.strftime('%Y-%m-%d')
-    checkout_str = check_out.strftime('%Y-%m-%d')
-    
-    # Build the Google Hotels URL
-    base_url = "https://www.google.com/travel/hotels"
-    params = {
-        'q': hotel_name,
-        'g2lb': '2502548,2503771,2503781,4258168,4270442,4284970,4291517,4597339,4757164,4814050,4874190,4893075,4899571,4899573,4924070,4965990,4985711,4986153,72277293,72302247,72317059,72379271,72406588,72414906,72421566,72430850,72471280,72472051,72481459,72485658,72602734,72614662,72616120,72619172,72628719,72638273,72647020,72648289,72658035,72671093,72686036,72729615,72748767,72754431,72760082,72794649',
-        'hl': 'en-US',
-        'gl': 'us',
-        'cs': '1',
-        'ssta': '1',
-        'ts': 'CAESCgoCCAMKAggDEAAaIQoDMjAwKgQSAggDOgZldXJvcDoMKgoSCAwQDhgBIAA',
-        'checkin': checkin_str,
-        'checkout': checkout_str,
-        'adults': str(guests)
-    }
-    
-    query_string = '&'.join([f'{k}={v}' for k, v in params.items()])
-    return f"{base_url}?{query_string}"
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
-def scrape_google_hotel_price(hotel_info, check_in, check_out, guests):
-    """
-    Scrape price from Google Hotels for a specific hotel
-    """
+HOTELS = [
+    {'name': 'Hotel Pension Suzanne',       'query': 'Hotel Pension Suzanne Vienna',       'is_mine': True},
+    {'name': 'Pension Neuer Markt',          'query': 'Pension Neuer Markt Vienna',          'is_mine': False},
+    {'name': 'Hotel am Schubertring',        'query': 'Hotel am Schubertring Vienna',        'is_mine': False},
+    {'name': 'Pension Opera Suites',         'query': 'Pension Opera Suites Vienna',         'is_mine': False},
+    {'name': 'Motel One Wien-Staatsoper',    'query': 'Motel One Wien-Staatsoper Vienna',    'is_mine': False},
+    {'name': 'Hotel Post Wien',             'query': 'Hotel Post Wien Vienna',              'is_mine': False},
+    {'name': 'Hotel Secession an der Oper', 'query': 'Hotel Secession an der Oper Vienna', 'is_mine': False},
+]
+
+def scrape_price(hotel_query, check_in, check_out, guests):
     try:
-        url = construct_google_hotels_url(hotel_info['search_query'], check_in, check_out, guests)
-        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            'Accept-Language': 'en-US,en;q=0.9',
         }
-        
-        # Make request to Google Hotels
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        # Parse HTML
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Find price elements - Google Hotels typically uses specific classes
-        # Note: These selectors may need adjustment based on Google's current HTML structure
-        price_elements = soup.find_all(['span', 'div'], class_=re.compile(r'price|rate|cost', re.I))
-        
-        # Look for prices in various formats
+        checkin_str  = check_in.strftime('%Y-%m-%d')
+        checkout_str = check_out.strftime('%Y-%m-%d')
+        url = (
+            f"https://www.google.com/travel/hotels"
+            f"?q={requests.utils.quote(hotel_query)}"
+            f"&checkin={checkin_str}"
+            f"&checkout={checkout_str}"
+            f"&adults={guests}"
+            f"&hl=en"
+        )
+        resp = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(resp.content, 'html.parser')
         prices = []
-        for element in price_elements:
-            text = element.get_text(strip=True)
-            # Match prices like €120, EUR 120, 120€, etc.
-            price_match = re.search(r'[€EUR\$]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)\s*[€EUR\$]?', text)
-            if price_match:
-                price_str = price_match.group(1).replace(',', '')
-                try:
-                    price = float(price_str)
-                    if 20 <= price <= 1000:  # Reasonable hotel price range
-                        prices.append(price)
-                except ValueError:
-                    continue
-        
+        for el in soup.find_all(string=re.compile(r'€\s*\d+')):
+            match = re.search(r'€\s*(\d[\d,]*)', str(el))
+            if match:
+                price = float(match.group(1).replace(',', ''))
+                if 20 <= price <= 2000:
+                    prices.append(price)
         if prices:
-            # Return the minimum price (usually the best available rate)
-            min_price = min(prices)
-            return {
-                'success': True,
-                'price': min_price,
-                'currency': 'EUR',
-                'source': 'Google Hotels'
-            }
-        else:
-            return {
-                'success': False,
-                'error': 'No price found',
-                'fallback_price': None
-            }
-            
+            return min(prices)
+        return None
     except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'fallback_price': None
-        }
-
-@app.route('/api/fetch-prices', methods=['POST'])
-def fetch_prices():
-    """
-    API endpoint to fetch all competitor prices
-    Expected JSON: {
-        "check_in": "2024-03-15",
-        "check_out": "2024-03-17",
-        "guests": 2
-    }
-    """
-    try:
-        data = request.get_json()
-        
-        # Parse dates
-        check_in = datetime.strptime(data['check_in'], '%Y-%m-%d')
-        check_out = datetime.strptime(data['check_out'], '%Y-%m-%d')
-        guests = int(data.get('guests', 2))
-        
-        results = []
-        
-        # Fetch prices for each competitor
-        for hotel_key, hotel_info in COMPETITORS.items():
-            print(f"Fetching price for {hotel_info['name']}...")
-            
-            price_data = scrape_google_hotel_price(hotel_info, check_in, check_out, guests)
-            
-            nights = (check_out - check_in).days
-            
-            if price_data['success']:
-                results.append({
-                    'name': hotel_info['name'],
-                    'pricePerNight': price_data['price'],
-                    'totalPrice': price_data['price'] * nights,
-                    'source': price_data['source'],
-                    'status': 'success'
-                })
-            else:
-                # Use fallback/estimated price if scraping fails
-                results.append({
-                    'name': hotel_info['name'],
-                    'pricePerNight': None,
-                    'totalPrice': None,
-                    'source': 'Unavailable',
-                    'status': 'error',
-                    'error': price_data.get('error')
-                })
-            
-            # Add delay to avoid rate limiting
-            time.sleep(2)
-        
-        return jsonify({
-            'success': True,
-            'data': results,
-            'nights': nights,
-            'timestamp': datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        print(f"Error scraping {hotel_query}: {e}")
+        return None
 
 @app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'service': 'Vienna Hotel Revenue Management API',
-        'version': '1.0.0'
-    })
+def health():
+    return jsonify({'status': 'healthy', 'service': 'Vienna Hotel Revenue API', 'version': '2.0.0'})
+
+@app.route('/api/fetch-prices', methods=['POST', 'OPTIONS'])
+def fetch_prices():
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'ok'}), 200
+    try:
+        data      = request.get_json()
+        check_in  = datetime.strptime(data['check_in'],  '%Y-%m-%d')
+        check_out = datetime.strptime(data['check_out'], '%Y-%m-%d')
+        guests    = int(data.get('guests', 2))
+        nights    = (check_out - check_in).days
+        results = []
+        for hotel in HOTELS:
+            print(f"Fetching: {hotel['name']}...")
+            price = scrape_price(hotel['query'], check_in, check_out, guests)
+            results.append({
+                'name':          hotel['name'],
+                'is_mine':       hotel['is_mine'],
+                'pricePerNight': price,
+                'totalPrice':    round(price * nights, 2) if price else None,
+                'source':        'Google Hotels' if price else 'Unavailable',
+                'status':        'success' if price else 'error',
+            })
+            time.sleep(1)
+        return jsonify({'success': True, 'data': results, 'nights': nights})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/')
 def index():
-    """API documentation"""
-    return '''
-    <html>
-    <head><title>Vienna Hotel Revenue API</title></head>
-    <body style="font-family: Arial; padding: 40px; max-width: 800px; margin: 0 auto;">
-        <h1>Vienna Hotel Revenue Management API</h1>
-        <h2>Endpoints</h2>
-        
-        <h3>POST /api/fetch-prices</h3>
-        <p>Fetch competitor prices from Google Hotels</p>
-        <pre style="background: #f4f4f4; padding: 15px; border-radius: 5px;">
-{
-    "check_in": "2024-03-15",
-    "check_out": "2024-03-17",
-    "guests": 2
-}
-        </pre>
-        
-        <h3>GET /api/health</h3>
-        <p>Health check endpoint</p>
-        
-        <h2>Competitor Hotels</h2>
-        <ul>
-            <li>Pension Neuer Markt</li>
-            <li>Hotel am Schubertring</li>
-            <li>Pension Opera Suites</li>
-            <li>Motel One Wien-Staatsoper</li>
-            <li>Hotel Post Wien</li>
-            <li>Hotel Secession an der Oper</li>
-        </ul>
-    </body>
-    </html>
-    '''
+    hotels_list = ''.join(f'<li>{h["name"]}{" (YOUR HOTEL)" if h["is_mine"] else ""}</li>' for h in HOTELS)
+    return f'<html><body style="font-family:Arial;padding:40px"><h1>Vienna Hotel Revenue API v2.0</h1><ul>{hotels_list}</ul></body></html>'
 
 if __name__ == '__main__':
-    print("Starting Vienna Hotel Revenue Management API...")
-    print("API will be available at: http://localhost:5000")
-    print("\nCompetitor hotels configured:")
-    for hotel in COMPETITORS.values():
-        print(f"  - {hotel['name']}")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port  = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
