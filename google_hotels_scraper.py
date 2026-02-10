@@ -18,92 +18,141 @@ def after_request(response):
     return response
 
 HOTELS = [
-    {'name': 'Hotel Pension Suzanne',       'query': 'Hotel Pension Suzanne Vienna',       'is_mine': True},
-    {'name': 'Pension Neuer Markt',          'query': 'Pension Neuer Markt Vienna',          'is_mine': False},
-    {'name': 'Hotel am Schubertring',        'query': 'Hotel am Schubertring Vienna',        'is_mine': False},
-    {'name': 'Pension Opera Suites',         'query': 'Pension Opera Suites Vienna',         'is_mine': False},
-    {'name': 'Motel One Wien-Staatsoper',    'query': 'Motel One Wien-Staatsoper Vienna',    'is_mine': False},
-    {'name': 'Hotel Post Wien',              'query': 'Hotel Post Wien Vienna',              'is_mine': False},
-    {'name': 'Hotel Secession an der Oper',  'query': 'Hotel Secession an der Oper Vienna',  'is_mine': False},
+    {
+        'name': 'Pension Suzanne',
+        'url_template': 'https://booking.pension-suzanne.at/?skd-checkin={checkin}&skd-checkout={checkout}&skd-adults={guests}',
+        'is_mine': True
+    },
+    {
+        'name': 'Aviano Boutique Hotel',
+        'url_template': 'https://booking.avianoboutiquehotel.com/?skd-checkin={checkin}&skd-checkout={checkout}&skd-adults={guests}',
+        'is_mine': False
+    },
+    {
+        'name': 'Hahn Hotel Vienna',
+        'url_template': 'https://booking.hahn-hotel-vienna.at/?activeBookingEngine=KBE&propertyCode=S004586&skd-checkin={checkin}&skd-checkout={checkout}&skd-property-code=S004586&skd-adults={guests}',
+        'is_mine': False
+    },
+    {
+        'name': 'Hotel Urania',
+        'url_template': 'https://s001276.officialbookings.com/?activeBookingEngine=KBE&propertyCode=S001276&skd-checkin={checkin}&skd-checkout={checkout}&skd-property-code=S001276&skd-adults={guests}',
+        'is_mine': False
+    },
 ]
 
-def scrape_price(hotel, check_in_str, check_out_str, guests):
+def scrape_seekda(hotel, checkin, checkout, guests):
     try:
+        url = hotel['url_template'].format(
+            checkin=checkin,
+            checkout=checkout,
+            guests=guests
+        )
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
-        url = (
-            f"https://www.google.com/travel/hotels"
-            f"?q={requests.utils.quote(hotel['query'])}"
-            f"&checkin={check_in_str}"
-            f"&checkout={check_out_str}"
-            f"&adults={guests}"
-            f"&hl=en"
-        )
-        resp = requests.get(url, headers=headers, timeout=8)
+        resp = requests.get(url, headers=headers, timeout=12)
         soup = BeautifulSoup(resp.content, 'html.parser')
+
         prices = []
-        for el in soup.find_all(string=re.compile(r'€\s*\d+')):
-            match = re.search(r'€\s*(\d[\d,]*)', str(el))
+
+        # Method 1: Look for EUR price patterns in text
+        for el in soup.find_all(string=re.compile(r'EUR\s*\d+|\d+[\.,]\d{2}\s*€|€\s*\d+')):
+            text = str(el)
+            for pattern in [r'EUR\s*(\d[\d,\.]*)', r'(\d[\d,\.]*)\s*€', r'€\s*(\d[\d,\.]*)']:
+                match = re.search(pattern, text)
+                if match:
+                    price_str = match.group(1).replace(',', '').replace('.', '')
+                    try:
+                        price = float(price_str)
+                        if 20 <= price <= 5000:
+                            prices.append(price)
+                    except:
+                        pass
+
+        # Method 2: Look in data attributes and specific tags
+        for tag in soup.find_all(['span', 'div', 'p'], class_=re.compile(r'price|rate|amount|cost', re.I)):
+            text = tag.get_text()
+            match = re.search(r'(\d[\d,\.]+)', text)
             if match:
-                price = float(match.group(1).replace(',', ''))
-                if 20 <= price <= 2000:
-                    prices.append(price)
-        price = min(prices) if prices else None
+                try:
+                    price = float(match.group(1).replace(',', '').replace('.', ''))
+                    if 20 <= price <= 5000:
+                        prices.append(price)
+                except:
+                    pass
+
+        if prices:
+            # Return lowest price (cheapest available room)
+            min_price = min(prices)
+            nights = (datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days
+            price_per_night = round(min_price / nights, 2) if nights > 1 else min_price
+            return {
+                'name': hotel['name'],
+                'is_mine': hotel['is_mine'],
+                'pricePerNight': price_per_night,
+                'totalPrice': min_price,
+                'status': 'success',
+                'source': 'Direct'
+            }
+
         return {
-            'name':          hotel['name'],
-            'is_mine':       hotel['is_mine'],
-            'pricePerNight': price,
-            'source':        'Google Hotels' if price else 'Unavailable',
-            'status':        'success' if price else 'error',
+            'name': hotel['name'],
+            'is_mine': hotel['is_mine'],
+            'pricePerNight': None,
+            'totalPrice': None,
+            'status': 'error',
+            'source': 'Unavailable'
         }
+
     except Exception as e:
         print(f"Error scraping {hotel['name']}: {e}")
         return {
-            'name':          hotel['name'],
-            'is_mine':       hotel['is_mine'],
+            'name': hotel['name'],
+            'is_mine': hotel['is_mine'],
             'pricePerNight': None,
-            'source':        'Unavailable',
-            'status':        'error',
+            'totalPrice': None,
+            'status': 'error',
+            'source': 'Unavailable'
         }
+
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'healthy', 'service': 'Vienna Hotel Revenue API', 'version': '3.0.0'})
+    return jsonify({
+        'status': 'healthy',
+        'service': 'Vienna Hotel Revenue API',
+        'version': '4.0.0',
+        'hotels': [h['name'] for h in HOTELS]
+    })
+
 
 @app.route('/api/fetch-prices', methods=['POST', 'OPTIONS'])
 def fetch_prices():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
     try:
-        data          = request.get_json()
-        check_in      = datetime.strptime(data['check_in'],  '%Y-%m-%d')
-        check_out     = datetime.strptime(data['check_out'], '%Y-%m-%d')
-        guests        = int(data.get('guests', 2))
-        nights        = (check_out - check_in).days
-        check_in_str  = check_in.strftime('%Y-%m-%d')
-        check_out_str = check_out.strftime('%Y-%m-%d')
+        data      = request.get_json()
+        checkin   = data['check_in']
+        checkout  = data['check_out']
+        guests    = int(data.get('guests', 2))
+        nights    = (datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days
 
-        # Fetch all hotels IN PARALLEL (much faster!)
+        # Fetch ALL hotels in parallel!
         results = []
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
-                executor.submit(scrape_price, hotel, check_in_str, check_out_str, guests): hotel
+                executor.submit(scrape_seekda, hotel, checkin, checkout, guests): hotel
                 for hotel in HOTELS
             }
             for future in as_completed(futures):
-                result = future.result()
-                if result['pricePerNight']:
-                    result['totalPrice'] = round(result['pricePerNight'] * nights, 2)
-                else:
-                    result['totalPrice'] = None
-                results.append(result)
+                results.append(future.result())
 
         return jsonify({'success': True, 'data': results, 'nights': nights})
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/')
 def index():
@@ -112,10 +161,11 @@ def index():
         for h in HOTELS
     )
     return f'''<html><body style="font-family:Arial;padding:40px">
-    <h1>Vienna Hotel Revenue API v3.0</h1>
-    <p>🚀 Parallel scraping enabled</p>
+    <h1>Vienna Hotel Revenue API v4.0</h1>
+    <p>🚀 Parallel Seekda scraping · 4 hotels</p>
     <ul>{hotels_list}</ul>
     </body></html>'''
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
