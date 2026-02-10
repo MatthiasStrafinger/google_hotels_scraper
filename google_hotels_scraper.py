@@ -13,39 +13,51 @@ import json
 import re
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for web app access
+CORS(app, resources={r"/api/*": {"origins": "*"}})  # Enable CORS for all origins
 
 # Competitor hotels in Vienna
 COMPETITORS = {
+    'pension_suzanne': {
+        'name': 'Hotel Pension Suzanne',
+        'google_hotel_id': 'ChIJYourHotelID',
+        'search_query': 'Hotel Pension Suzanne Vienna',
+        'is_your_hotel': True  # Mark as your hotel
+    },
     'pension_neuer_markt': {
         'name': 'Pension Neuer Markt',
-        'google_hotel_id': 'ChIJNzL6U1PdaUcRqLm_4BBFsQ4',  # Example ID
-        'search_query': 'Pension Neuer Markt Vienna'
+        'google_hotel_id': 'ChIJNzL6U1PdaUcRqLm_4BBFsQ4',
+        'search_query': 'Pension Neuer Markt Vienna',
+        'is_your_hotel': False
     },
     'hotel_schubertring': {
         'name': 'Hotel am Schubertring',
         'google_hotel_id': 'ChIJexample2',
-        'search_query': 'Hotel am Schubertring Vienna'
+        'search_query': 'Hotel am Schubertring Vienna',
+        'is_your_hotel': False
     },
     'pension_opera': {
         'name': 'Pension Opera Suites',
         'google_hotel_id': 'ChIJexample3',
-        'search_query': 'Pension Opera Suites Vienna'
+        'search_query': 'Pension Opera Suites Vienna',
+        'is_your_hotel': False
     },
     'motel_one': {
         'name': 'Motel One Wien-Staatsoper',
         'google_hotel_id': 'ChIJexample4',
-        'search_query': 'Motel One Wien-Staatsoper'
+        'search_query': 'Motel One Wien-Staatsoper',
+        'is_your_hotel': False
     },
     'hotel_post': {
         'name': 'Hotel Post Wien',
         'google_hotel_id': 'ChIJexample5',
-        'search_query': 'Hotel Post Wien Vienna'
+        'search_query': 'Hotel Post Wien Vienna',
+        'is_your_hotel': False
     },
     'hotel_secession': {
         'name': 'Hotel Secession an der Oper',
         'google_hotel_id': 'ChIJexample6',
-        'search_query': 'Hotel Secession an der Oper Vienna'
+        'search_query': 'Hotel Secession an der Oper Vienna',
+        'is_your_hotel': False
     }
 }
 
